@@ -308,7 +308,10 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val id_ren = IndexedSeq(id_ctrl.rxs1, id_ctrl.rxs2)
   val id_raddr = IndexedSeq(id_raddr1, id_raddr2)
   val rf = new RegFile(regAddrMask, xLen)
-  val id_rs = id_raddr.map(rf.read _)
+  val erf = new RegFile(regAddrMask, xLen)
+  val id_rs = IndexedSeq(
+    if (id_ctrl.ext1 == true.B) erf.read(id_raddr(0)) else rf.read(id_raddr(0)),
+    if (id_ctrl.ext2 == true.B) erf.read(id_raddr(1)) else rf.read(id_raddr(1)))
   val ctrl_killd = Wire(Bool())
   val id_npc = (ibuf.io.pc.asSInt + ImmGen(IMM_UJ, id_inst(0))).asUInt
 
@@ -769,7 +772,13 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
                  Mux(wb_ctrl.csr =/= CSR.N, csr.io.rw.rdata,
                  Mux(wb_ctrl.mul, mul.map(_.io.resp.bits.data).getOrElse(wb_reg_wdata),
                  wb_reg_wdata))))
-  when (rf_wen) { rf.write(rf_waddr, rf_wdata) }
+  when (rf_wen) { 
+    when (wb_ctrl.extd){
+      erf.write(rf_waddr, rf_wdata)
+    }.otherwise{
+      rf.write(rf_waddr, rf_wdata)
+    }
+   }
 
   // hook up control/status regfile
   csr.io.ungated_clock := clock
