@@ -185,6 +185,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val pipelinedMul = usingMulDiv && mulDivParams.mulUnroll == xLen
   val decode_table = {
     require(!usingRoCC || !rocketParams.useSCIE)
+    Seq(new ZXBGASDecode(aluFn)) ++:
     (if (usingMulDiv) new MDecode(pipelinedMul, aluFn) +: (xLen > 32).option(new M64Decode(pipelinedMul, aluFn)).toSeq else Nil) ++:
     (if (usingAtomics) new ADecode(aluFn) +: (xLen > 32).option(new A64Decode(aluFn)).toSeq else Nil) ++:
     (if (fLen >= 32)    new FDecode(aluFn) +: (xLen > 32).option(new F64Decode(aluFn)).toSeq else Nil) ++:
@@ -293,7 +294,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   require(decodeWidth == 1 /* TODO */ && retireWidth == decodeWidth)
   require(!(coreParams.useRVE && coreParams.fpu.nonEmpty), "Can't select both RVE and floating-point")
   require(!(coreParams.useRVE && coreParams.useHypervisor), "Can't select both RVE and Hypervisor")
-  val id_ctrl = Wire(new IntCtrlSigs(aluFn)).decode(id_inst(0), decode_table)
+  val id_ctrl = dontTouch(Wire(new IntCtrlSigs(aluFn)).decode(id_inst(0), decode_table))
   val lgNXRegs = if (coreParams.useRVE) 4 else 5
   val regAddrMask = (1 << lgNXRegs) - 1
 
@@ -310,8 +311,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val rf = new RegFile(regAddrMask, xLen)
   val erf = new RegFile(regAddrMask, xLen)
   val id_rs = IndexedSeq(
-    if (id_ctrl.ext1 == true.B) erf.read(id_raddr(0)) else rf.read(id_raddr(0)),
-    if (id_ctrl.ext2 == true.B) erf.read(id_raddr(1)) else rf.read(id_raddr(1)))
+    Mux(id_ctrl.ext1, erf.read(id_raddr(0)), rf.read(id_raddr(0))),
+    Mux(id_ctrl.ext2, erf.read(id_raddr(1)), rf.read(id_raddr(1))))
   val ctrl_killd = Wire(Bool())
   val id_npc = (ibuf.io.pc.asSInt + ImmGen(IMM_UJ, id_inst(0))).asUInt
 
@@ -403,14 +404,17 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val mem_waddr = mem_reg_inst(11,7) & regAddrMask.U
   val wb_waddr = wb_reg_inst(11,7) & regAddrMask.U
   val bypass_sources = IndexedSeq(
-    (true.B, 0.U, 0.U), // treat reading x0 as a bypass
-    (ex_reg_valid && ex_ctrl.wxd, ex_waddr, mem_reg_wdata),
-    (mem_reg_valid && mem_ctrl.wxd && !mem_ctrl.mem, mem_waddr, wb_reg_wdata),
-    (mem_reg_valid && mem_ctrl.wxd, mem_waddr, dcache_bypass_data))
-  val id_bypass_src = id_raddr.map(raddr => bypass_sources.map(s => s._1 && s._2 === raddr))
+    (true.B, 0.U, ex_ctrl.extd, 0.U), // treat reading x0 as a bypass
+    (ex_reg_valid && ex_ctrl.wxd, ex_waddr, ex_ctrl.extd, mem_reg_wdata),
+    (mem_reg_valid && mem_ctrl.wxd && !mem_ctrl.mem, mem_waddr, mem_ctrl.extd, wb_reg_wdata),
+    (mem_reg_valid && mem_ctrl.wxd, mem_waddr, mem_ctrl.extd, dcache_bypass_data))
+  val id_bypass_src = IndexedSeq(
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === id_ctrl.ext1),
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(1) && s._3 === id_ctrl.ext2),
+  )
 
   // execute stage
-  val bypass_mux = bypass_sources.map(_._3)
+  val bypass_mux = bypass_sources.map(_._4)
   val ex_reg_rs_bypass = Reg(Vec(id_raddr.size, Bool()))
   val ex_reg_rs_lsb = Reg(Vec(id_raddr.size, UInt(log2Ceil(bypass_sources.size).W)))
   val ex_reg_rs_msb = Reg(Vec(id_raddr.size, UInt()))
