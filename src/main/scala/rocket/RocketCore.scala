@@ -307,12 +307,13 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val id_load_use = Wire(Bool())
   val id_reg_fence = RegInit(false.B)
   val id_ren = IndexedSeq(id_ctrl.rxs1, id_ctrl.rxs2)
-  val id_raddr = IndexedSeq(id_raddr1, id_raddr2)
+  val id_raddr = IndexedSeq(id_raddr1, Mux(id_ctrl.ers === ERS_EQUAL, id_raddr1, id_raddr2))
   val rf = new RegFile(regAddrMask, xLen)
   val erf = new RegFile(regAddrMask, xLen)
   val id_rs = IndexedSeq(
-    Mux(id_ctrl.ext1, erf.read(id_raddr(0)), rf.read(id_raddr(0))),
-    Mux(id_ctrl.ext2, erf.read(id_raddr(1)), rf.read(id_raddr(1))))
+    Mux(id_ctrl.ers === ERS_NONE || id_ctrl.ers === ERS_MEM, rf read id_raddr(0), erf read id_raddr(0)),
+    Mux(id_ctrl.ers === ERS_NONE, rf read id_raddr(1), erf read id_raddr(1))
+  )
   val ctrl_killd = Wire(Bool())
   val id_npc = (ibuf.io.pc.asSInt + ImmGen(IMM_UJ, id_inst(0))).asUInt
 
@@ -409,9 +410,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     (mem_reg_valid && mem_ctrl.wxd && !mem_ctrl.mem, mem_waddr, mem_ctrl.extd, wb_reg_wdata),
     (mem_reg_valid && mem_ctrl.wxd, mem_waddr, mem_ctrl.extd, dcache_bypass_data))
   val id_bypass_src = IndexedSeq(
-    bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === id_ctrl.ext1),
-    bypass_sources.map(s => s._1 && s._2 === id_raddr(1) && s._3 === id_ctrl.ext2),
-  )
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === (id_ctrl.ers === ERS_BOTH || id_ctrl.ers === ERS_EQUAL)),
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(1) && s._3 === (id_ctrl.ers =/= ERS_NONE))
+  )//bypass if extd and erf or !extd and !erf
 
   // execute stage
   val bypass_mux = bypass_sources.map(_._4)
@@ -419,7 +420,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val ex_reg_rs_lsb = Reg(Vec(id_raddr.size, UInt(log2Ceil(bypass_sources.size).W)))
   val ex_reg_rs_msb = Reg(Vec(id_raddr.size, UInt()))
   val ex_rs = for (i <- 0 until id_raddr.size)
-    yield Mux(ex_reg_rs_bypass(i), bypass_mux(ex_reg_rs_lsb(i)), Cat(ex_reg_rs_msb(i), ex_reg_rs_lsb(i)))
+    yield Mux(ex_reg_rs_bypass(i), bypass_mux(ex_reg_rs_lsb(i)), 1.asUInt(1))
   val ex_imm = ImmGen(ex_ctrl.sel_imm, ex_reg_inst)
   val ex_op1 = MuxLookup(ex_ctrl.sel_alu1, 0.S, Seq(
     A1_RS1 -> ex_rs(0).asSInt,
@@ -428,6 +429,10 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     A2_RS2 -> ex_rs(1).asSInt,
     A2_IMM -> ex_imm,
     A2_SIZE -> Mux(ex_reg_rvc, 2.S, 4.S)))
+
+  //extended addressing TODO
+  // val ex_ext_addr = Cat(ex_rs(1).asUInt(xLen), ex_rs(0).asUInt(xLen)).asSInt + ex_imm.asSInt
+  // val ex_ext_addr_valid = ex_ctrl.ers =/= ERS_NONE && ex_ctrl.mem
 
   val alu = Module(aluFn match {
     case _: ABLUFN => new ABLU

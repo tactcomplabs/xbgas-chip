@@ -46,6 +46,12 @@ trait ScalarOpConstants {
   def DW_32 = false.B
   def DW_64 = true.B
   def DW_XPR = DW_64
+
+  def ERS_X = BitPat("b??")//TODO better names?
+  def ERS_NONE = 0.U(2.W)
+  def ERS_BOTH = 1.U(2.W)
+  def ERS_MEM = 2.U(2.W)
+  def ERS_EQUAL = 3.U(2.W)
 }
 
 trait MemoryOpConstants {
