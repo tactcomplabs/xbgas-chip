@@ -5,6 +5,7 @@ package freechips.rocketchip.system
 
 import org.chipsalliance.cde.config.Config
 import freechips.rocketchip.subsystem._
+import xbgas._
 
 class WithJtagDTMSystem extends freechips.rocketchip.subsystem.WithJtagDTM
 class WithDebugSBASystem extends freechips.rocketchip.subsystem.WithDebugSBA
@@ -41,6 +42,8 @@ class DualChannelDualBankConfig extends Config(
 )
 
 class RoccExampleConfig extends Config(new WithRoccExample ++ new DefaultConfig)
+
+class XbgasConfig extends Config(new WithXbgasRocc ++ new DefaultConfig)
 
 class HeterogeneousTileExampleConfig extends Config(
   new WithNBigCores(n = 1) ++

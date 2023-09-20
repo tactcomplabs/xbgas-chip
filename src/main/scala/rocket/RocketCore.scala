@@ -309,9 +309,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val id_ren = IndexedSeq(id_ctrl.rxs1, id_ctrl.rxs2)
   val id_raddr = IndexedSeq(id_raddr1, Mux(id_ctrl.ers === ERS_EQUAL, id_raddr1, id_raddr2))
   val rf = new RegFile(regAddrMask, xLen)
-  val erf = new RegFile(regAddrMask, xLen)
+  val erf = new RegFile(regAddrMask, xLen)//TODO regAddrMask + 1, test addr
   val id_rs = IndexedSeq(
-    Mux(id_ctrl.ers === ERS_NONE || id_ctrl.ers === ERS_MEM, rf read id_raddr(0), erf read id_raddr(0)),
+    Mux(id_ctrl.ers =/= ERS_BOTH, rf read id_raddr(0), erf read id_raddr(0)),
     Mux(id_ctrl.ers === ERS_NONE, rf read id_raddr(1), erf read id_raddr(1))
   )
   val ctrl_killd = Wire(Bool())
@@ -410,7 +410,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     (mem_reg_valid && mem_ctrl.wxd && !mem_ctrl.mem, mem_waddr, mem_ctrl.extd, wb_reg_wdata),
     (mem_reg_valid && mem_ctrl.wxd, mem_waddr, mem_ctrl.extd, dcache_bypass_data))
   val id_bypass_src = IndexedSeq(
-    bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === (id_ctrl.ers === ERS_BOTH || id_ctrl.ers === ERS_EQUAL)),
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === (id_ctrl.ers === ERS_BOTH)),
     bypass_sources.map(s => s._1 && s._2 === id_raddr(1) && s._3 === (id_ctrl.ers =/= ERS_NONE))
   )//bypass if extd and erf or !extd and !erf
 

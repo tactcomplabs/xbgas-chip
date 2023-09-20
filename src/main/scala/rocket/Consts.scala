@@ -51,7 +51,7 @@ trait ScalarOpConstants {
   def ERS_NONE = 0.U(2.W) //rs1 rs2
   def ERS_BOTH = 1.U(2.W) //ers1 ers2
   def ERS_MEM = 2.U(2.W) //rs1 ers2
-  def ERS_EQUAL = 3.U(2.W) //ers1 ers1
+  def ERS_EQUAL = 3.U(2.W) //rs1 ers1
 }
 
 trait MemoryOpConstants {

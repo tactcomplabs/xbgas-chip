@@ -54,7 +54,7 @@ class DCacheDataArray(implicit p: Parameters) extends L1HellaCacheModule()(p) {
       DescribedSRAM(
         name = s"data_arrays_${i}",
         desc = "DCache Data Array",
-        size = nSets * cacheBlockBytes / rowBytes,
+        size = nSets * (cacheBlockBytes / rowBytes),
         data = Vec(nWays * (subWordBits / eccBits), UInt(encBits.W))
       )
   }
@@ -272,7 +272,13 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   pma_checker.io.req.bits.prv := s1_req.dprv
   pma_checker.io.req.bits.v := s1_req.dv
 
-  val s1_paddr = Cat(Mux(s1_tlb_req_valid, s1_req.addr(paddrBits-1, pgIdxBits), tlb.io.resp.paddr >> pgIdxBits), s1_req.addr(pgIdxBits-1, 0))
+  val s1_paddr = Cat(Mux(s1_tlb_req_valid, 
+  s1_req.addr(paddrBits-1, pgIdxBits),
+   tlb.io.resp.paddr >> pgIdxBits), s1_req.addr(pgIdxBits-1, 0))
+  dontTouch(s1_paddr)
+  dontTouch(s1_tlb_req_valid)
+  dontTouch(s1_req)
+  
   val s1_victim_way = Wire(UInt())
   val (s1_hit_way, s1_hit_state, s1_meta) =
     if (usingDataScratchpad) {
@@ -314,6 +320,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val s2_valid_masked = s2_valid_no_xcpt && s2_not_nacked_in_s1
   val s2_valid_not_killed = s2_valid_masked && !io.cpu.s2_kill
   val s2_req = Reg(chiselTypeOf(io.cpu.req.bits))
+  dontTouch(s2_req)
   val s2_cmd_flush_all = s2_req.cmd === M_FLUSH_ALL && !s2_req.size(0)
   val s2_cmd_flush_line = s2_req.cmd === M_FLUSH_ALL && s2_req.size(0)
   val s2_tlb_xcpt = Reg(chiselTypeOf(tlb.io.resp))
@@ -554,6 +561,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val a_source = PriorityEncoder(~uncachedInFlight.asUInt << mmioOffset) // skip the MSHR
   val acquire_address = (s2_req.addr >> idxLSB) << idxLSB
   val access_address = s2_req.addr
+  dontTouch(s2_req)
   val a_size = s2_req.size
   val a_data = Fill(beatWords, pstore1_data)
   val a_mask = pstore1_mask << (access_address.extract(beatBytes.log2-1, wordBytes.log2) << 3)
@@ -582,6 +590,11 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
       (s2_valid_cached_miss &&
        !(release_ack_wait && (s2_req.addr ^ release_ack_addr)(((pgIdxBits + pgLevelBits) min paddrBits) - 1, idxLSB) === 0.U) &&
        (cacheParams.acquireBeforeRelease.B && !release_ack_wait && release_queue_empty || !s2_victim_dirty)))
+  dontTouch(tl_out_a)
+  dontTouch(tl_out_a.valid)
+  val tl_out_d = Wire(chiselTypeOf(tl_out.d));
+  tl_out_d := tl_out.d
+  dontTouch(tl_out_d)
   tl_out_a.bits := Mux(!s2_uncached, acquire(s2_vaddr, s2_req.addr, s2_grow_param),
     Mux(!s2_write, get,
     Mux(s2_req.cmd === M_PWR, putpartial,
