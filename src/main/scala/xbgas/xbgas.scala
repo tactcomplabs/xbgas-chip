@@ -21,7 +21,7 @@ class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
-  val s_idle :: s_req :: s_mem_wait :: s_tl_wait :: s_resp :: Nil = Enum(5)
+  val s_idle :: s_mem_wait :: s_tl_wait :: s_resp :: Nil = Enum(4)
   val state = RegInit(s_idle)
   val commandParser = Module(new CommandParserModule()(p))
   commandParser.io.state := state
