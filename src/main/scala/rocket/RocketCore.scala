@@ -405,7 +405,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val mem_waddr = mem_reg_inst(11,7) & regAddrMask.U
   val wb_waddr = wb_reg_inst(11,7) & regAddrMask.U
   val bypass_sources = IndexedSeq(
-    (true.B, 0.U, ex_ctrl.extd, 0.U), // treat reading x0 as a bypass
+    (true.B, 0.U, false.B, 0.U), // treat reading x0 as a bypass
     (ex_reg_valid && ex_ctrl.wxd, ex_waddr, ex_ctrl.extd, mem_reg_wdata),
     (mem_reg_valid && mem_ctrl.wxd && !mem_ctrl.mem, mem_waddr, mem_ctrl.extd, wb_reg_wdata),
     (mem_reg_valid && mem_ctrl.wxd, mem_waddr, mem_ctrl.extd, dcache_bypass_data))

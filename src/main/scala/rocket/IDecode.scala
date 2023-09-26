@@ -726,8 +726,8 @@ class ZXBGASDecode(aluFn: ALUFN = ALUFN())(implicit val p: Parameters) extends D
     EADDI ->      List(Y,N,N,N,N,N,N,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   N,M_X,      N,N,N,N,N,N,Y,CSR.N,N,N,N,N,N,ERS_BOTH),//ers1 needed only
     EADDIE ->     List(Y,N,N,N,N,N,N,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   N,M_X,      N,N,N,N,N,N,Y,CSR.N,N,N,N,N,Y,ERS_NONE),
     EADDIX ->     List(Y,N,N,N,N,N,N,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   N,M_X,      N,N,N,N,N,N,Y,CSR.N,N,N,N,N,Y,ERS_BOTH),//ers1 needed only
-    ELD->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   N,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,N,ERS_EQUAL),
-    ESD->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_S, DW_XPR,aluFn.FN_ADD,   N,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,N,ERS_EQUAL),
+    ELD->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   N,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,N,ERS_EQUAL),
+    ESD->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_S, DW_XPR,aluFn.FN_ADD,   N,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,N,ERS_EQUAL),
   )
 }
 

@@ -20,19 +20,24 @@ class XbgasAccel(opcodes: OpcodeSet)(implicit p: Parameters)
 class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
-
-  val s_idle :: s_mem_wait :: s_tl_wait :: s_resp :: Nil = Enum(4)
+  val s_idle :: s_mem_req :: s_tl_req :: s_mem_wait :: s_tl_wait :: s_resp :: Nil =
+    Enum(6)
   val state = RegInit(s_idle)
   val commandParser = Module(new CommandParserModule()(p))
   commandParser.io.state := state
   commandParser.io.cmd <> io.cmd.bits
-  io.cmd.ready := (state === s_idle)
   io.busy := (state =/= s_idle)
   io.interrupt := false.B
 
-  // request data
+  // receive cmd
+  io.cmd.ready := (state === s_idle)
+  when(io.cmd.fire) {
+    state := Mux(commandParser.io.local, s_mem_req, s_tl_req)
+  }
+
+  // request data from MMIO
   val (tl_out, edgesOut) = outer.atlNode.out(0)
-  tl_out.a.valid := io.cmd.fire && !commandParser.io.local
+  tl_out.a.valid := (state === s_tl_req)
   val get = edgesOut
     .Get(
       fromSource = 0.U,
@@ -53,16 +58,16 @@ class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
     state := s_tl_wait
   }
 
-  // receive data
+  // receive data from MMIO
   tl_out.d.ready := (state === s_tl_wait)
   val data = Reg(UInt(xLen.W))
-  when(state === s_tl_wait && tl_out.d.valid) {
-    data := tl_out.d.bits.data(xLen - 1, 0)
+  when(tl_out.d.fire) {
+    data := tl_out.d.bits.data
     state := Mux(commandParser.io.load, s_resp, s_idle)
   }
 
   // request data from memory
-  io.mem.req.valid := io.cmd.fire && commandParser.io.local
+  io.mem.req.valid := (state === s_mem_req)
   io.mem.req.bits.addr := commandParser.io.addr
   val regAddrMask = if (coreParams.useRVE) (1 << 4) - 1 else (1 << 5) - 1
   io.mem.req.bits.tag := commandParser.io.memTag
@@ -77,17 +82,15 @@ class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
     state := s_mem_wait
   }
 
+  // receive data from memory
+  when(io.mem.resp.valid && state === s_mem_wait) {
+    data := io.mem.resp.bits.data
+    state := Mux(commandParser.io.load, s_resp, s_idle)
+  }
+
   // respond
-  io.resp.valid := Mux(
-    commandParser.io.local,
-    io.mem.resp.valid && (state === s_mem_wait),
-    tl_out.d.valid && (state === s_tl_wait)
-  )
-  io.resp.bits.data := Mux(
-    commandParser.io.local,
-    io.mem.resp.bits.data,
-    tl_out.d.bits.data
-  )
+  io.resp.valid := (state === s_resp)
+  io.resp.bits.data := data
   io.resp.bits.rd := commandParser.io.rd
   when(io.resp.fire) {
     state := s_idle
@@ -128,33 +131,34 @@ class CommandParserModule(implicit val p: Parameters)
   dontTouch(io)
   val stateIsIdle = (io.state === 0.U)
   val reg_cmd = RegEnable(io.cmd, stateIsIdle)
-  val _cmd = Mux(stateIsIdle, io.cmd, reg_cmd)
+  val cmd = Mux(stateIsIdle, io.cmd, reg_cmd)
 
-  io.size := VecInit(_cmd.inst.xs2, _cmd.inst.xs1).asUInt
-  io.unsigned := _cmd.inst.xd
-  io.load := (_cmd.inst.opcode =/= "b1111011".U)
+  io.size := VecInit(cmd.inst.xs2, cmd.inst.xs1).asUInt
+  io.unsigned := cmd.inst.xd
+  io.load := (cmd.inst.opcode =/= "b1111011".U)
 
   // extended addressing
-  val inst = _cmd.inst.asUInt
-  val imm = Mux(
+  val inst = cmd.inst.asUInt
+  val imm = Wire(SInt((2 * xLen).W))
+  imm := Mux(
     io.load,
     ImmGen(IMM_I, inst),
     ImmGen(IMM_S, inst)
   )
-  dontTouch(imm)
-  dontTouch(inst)
-  io.addr := Cat(_cmd.rs2, _cmd.rs1) + imm.asUInt
-  io.local := (_cmd.rs2 === 0.U)
+  val addr = Wire(UInt((2 * xLen).W))
+  addr := Cat(cmd.rs2, cmd.rs1)
+  io.addr := addr + imm.asUInt
+  io.local := (cmd.rs2 === 0.U)
 
   // data
-  io.wdata := _cmd.rs2
-  io.rd := _cmd.inst.rd
+  io.wdata := cmd.rs2
+  io.rd := cmd.inst.rd
 
   // memory
-  io.memDprv := _cmd.status.dprv
-  io.memDv := _cmd.status.dv
+  io.memDprv := cmd.status.dprv
+  io.memDv := cmd.status.dv
   val regAddrMask = if (coreParams.useRVE) (1 << 4) - 1 else (1 << 5) - 1
-  io.memTag := _cmd.inst.rd & regAddrMask.U
+  io.memTag := cmd.inst.rd & regAddrMask.U
   io.memCmd := Mux(io.load, M_XRD, M_XWR) // TODO set for other load/store sizes
 }
 
