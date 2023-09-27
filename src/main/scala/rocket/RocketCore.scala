@@ -306,14 +306,12 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
 
   val id_load_use = Wire(Bool())
   val id_reg_fence = RegInit(false.B)
-  val id_ren = IndexedSeq(id_ctrl.rxs1, id_ctrl.rxs2)
-  val id_raddr = IndexedSeq(id_raddr1, Mux(id_ctrl.ers === ERS_EQUAL, id_raddr1, id_raddr2))
+  val id_ren = IndexedSeq(id_ctrl.rxs1, id_ctrl.rxs2, id_ctrl.rocc)
+  val id_raddr = IndexedSeq(id_raddr1, Mux(id_ctrl.edp(2), id_waddr, id_raddr2), Mux(id_ctrl.edp(2), id_raddr2, id_raddr1))
   val rf = new RegFile(regAddrMask, xLen)
-  val erf = new RegFile(regAddrMask, xLen)//TODO regAddrMask + 1, test addr
-  val id_rs = IndexedSeq(
-    Mux(id_ctrl.ers =/= ERS_BOTH, rf read id_raddr(0), erf read id_raddr(0)),
-    Mux(id_ctrl.ers === ERS_NONE, rf read id_raddr(1), erf read id_raddr(1))
-  )
+  val erf = new RegFile(regAddrMask, xLen)
+  val id_rs = for(i <- 0 until id_raddr.size)
+    yield Mux(id_ctrl.edp(i) || (i == 2).B, erf read id_raddr(i), rf read id_raddr(i))
   val ctrl_killd = Wire(Bool())
   val id_npc = (ibuf.io.pc.asSInt + ImmGen(IMM_UJ, id_inst(0))).asUInt
 
@@ -405,14 +403,15 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val mem_waddr = mem_reg_inst(11,7) & regAddrMask.U
   val wb_waddr = wb_reg_inst(11,7) & regAddrMask.U
   val bypass_sources = IndexedSeq(
-    (true.B, 0.U, false.B, 0.U), // treat reading x0 as a bypass
-    (ex_reg_valid && ex_ctrl.wxd, ex_waddr, ex_ctrl.extd, mem_reg_wdata),
-    (mem_reg_valid && mem_ctrl.wxd && !mem_ctrl.mem, mem_waddr, mem_ctrl.extd, wb_reg_wdata),
-    (mem_reg_valid && mem_ctrl.wxd, mem_waddr, mem_ctrl.extd, dcache_bypass_data))
+    (true.B, 0.U, false.B, 0.U), // treat reading x0 as a bypass TODO read e0
+    (ex_reg_valid && ex_ctrl.wxd, ex_waddr, ex_ctrl.edp(1), mem_reg_wdata),
+    (mem_reg_valid && mem_ctrl.wxd && !mem_ctrl.mem, mem_waddr, mem_ctrl.edp(1), wb_reg_wdata),
+    (mem_reg_valid && mem_ctrl.wxd, mem_waddr, mem_ctrl.edp(1), dcache_bypass_data))
   val id_bypass_src = IndexedSeq(
-    bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === (id_ctrl.ers === ERS_BOTH)),
-    bypass_sources.map(s => s._1 && s._2 === id_raddr(1) && s._3 === (id_ctrl.ers =/= ERS_NONE))
-  )//bypass if extd and erf or !extd and !erf
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === id_ctrl.edp(0)),
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(1) && s._3 === id_ctrl.edp(1)),
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(2) && s._3 === id_ctrl.edp(1))
+  )
 
   // execute stage
   val bypass_mux = bypass_sources.map(_._4)
@@ -782,7 +781,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
                  Mux(wb_ctrl.mul, mul.map(_.io.resp.bits.data).getOrElse(wb_reg_wdata),
                  wb_reg_wdata))))
   when (rf_wen) { 
-    when (wb_ctrl.extd){
+    when (wb_ctrl.edp(1)){
       erf.write(rf_waddr, rf_wdata)
     }.otherwise{
       rf.write(rf_waddr, rf_wdata)
@@ -854,13 +853,14 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     iobpw.action := bp.control.action
   }
 
-  val hazard_targets = Seq((id_ctrl.rxs1 && id_raddr1 =/= 0.U, id_raddr1),
-                           (id_ctrl.rxs2 && id_raddr2 =/= 0.U, id_raddr2),
-                           (id_ctrl.wxd  && id_waddr  =/= 0.U, id_waddr))
-  val fp_hazard_targets = Seq((io.fpu.dec.ren1, id_raddr1),
-                              (io.fpu.dec.ren2, id_raddr2),
-                              (io.fpu.dec.ren3, id_raddr3),
-                              (io.fpu.dec.wen, id_waddr))
+  val hazard_targets = Seq((id_ren(0) && (id_ctrl.edp(0) || id_raddr(0) =/= 0.U), id_ctrl.edp(0), id_raddr(0)),
+                           (id_ren(1) && (id_ctrl.edp(1) || id_raddr(1) =/= 0.U), id_ctrl.edp(1), id_raddr(1)),
+                           (id_ren(2), true.B, id_raddr(2)),
+                           (id_ctrl.wxd  && (id_ctrl.edp(2) || id_waddr =/= 0.U), id_ctrl.edp(2), id_waddr))
+  val fp_hazard_targets = Seq((io.fpu.dec.ren1, false.B, id_raddr(0)),
+                              (io.fpu.dec.ren2, false.B, id_raddr(1)),
+                              (io.fpu.dec.ren3, false.B, id_raddr(2)),
+                              (io.fpu.dec.wen, false.B, id_waddr))
 
   val sboard = new Scoreboard(32, true)
   sboard.clear(ll_wen, ll_waddr)
@@ -869,13 +869,13 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     if (!tileParams.dcache.get.dataECC.isDefined) ll_wen && ll_waddr === r
     else div.io.resp.fire && div.io.resp.bits.tag === r || dmem_resp_replay && dmem_resp_xpu && dmem_resp_waddr === r
   }
-  val id_sboard_hazard = checkHazards(hazard_targets, rd => sboard.read(rd) && !id_sboard_clear_bypass(rd))
+  val id_sboard_hazard = checkHazards(hazard_targets, (_,rd) => sboard.read(rd) && !id_sboard_clear_bypass(rd))
   sboard.set(wb_set_sboard && wb_wen, wb_waddr)
 
   // stall for RAW/WAW hazards on CSRs, loads, AMOs, and mul/div in execute stage.
   val ex_cannot_bypass = ex_ctrl.csr =/= CSR.N || ex_ctrl.jalr || ex_ctrl.mem || ex_ctrl.mul || ex_ctrl.div || ex_ctrl.fp || ex_ctrl.rocc || ex_scie_pipelined
-  val data_hazard_ex = ex_ctrl.wxd && checkHazards(hazard_targets, _ === ex_waddr)
-  val fp_data_hazard_ex = id_ctrl.fp && ex_ctrl.wfd && checkHazards(fp_hazard_targets, _ === ex_waddr)
+  val data_hazard_ex = ex_ctrl.wxd && checkHazards(hazard_targets, (extd,rd) => extd === ex_ctrl.edp(1) && rd === ex_waddr)
+  val fp_data_hazard_ex = id_ctrl.fp && ex_ctrl.wfd && checkHazards(fp_hazard_targets, (_,rd) => rd === ex_waddr)
   val id_ex_hazard = ex_reg_valid && (data_hazard_ex && ex_cannot_bypass || fp_data_hazard_ex)
 
   // stall for RAW/WAW hazards on CSRs, LB/LH, and mul/div in memory stage.
@@ -883,14 +883,14 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     if (fastLoadWord) (!fastLoadByte).B && mem_reg_slow_bypass
     else true.B
   val mem_cannot_bypass = mem_ctrl.csr =/= CSR.N || mem_ctrl.mem && mem_mem_cmd_bh || mem_ctrl.mul || mem_ctrl.div || mem_ctrl.fp || mem_ctrl.rocc
-  val data_hazard_mem = mem_ctrl.wxd && checkHazards(hazard_targets, _ === mem_waddr)
-  val fp_data_hazard_mem = id_ctrl.fp && mem_ctrl.wfd && checkHazards(fp_hazard_targets, _ === mem_waddr)
+  val data_hazard_mem = mem_ctrl.wxd && checkHazards(hazard_targets, (extd,rd) => extd === mem_ctrl.edp(1) && rd === mem_waddr)
+  val fp_data_hazard_mem = id_ctrl.fp && mem_ctrl.wfd && checkHazards(fp_hazard_targets, (_,rd) => rd === mem_waddr)
   val id_mem_hazard = mem_reg_valid && (data_hazard_mem && mem_cannot_bypass || fp_data_hazard_mem)
   id_load_use := mem_reg_valid && data_hazard_mem && mem_ctrl.mem
 
   // stall for RAW/WAW hazards on load/AMO misses and mul/div in writeback.
-  val data_hazard_wb = wb_ctrl.wxd && checkHazards(hazard_targets, _ === wb_waddr)
-  val fp_data_hazard_wb = id_ctrl.fp && wb_ctrl.wfd && checkHazards(fp_hazard_targets, _ === wb_waddr)
+  val data_hazard_wb = wb_ctrl.wxd && checkHazards(hazard_targets, (extd,rd) => extd === wb_ctrl.edp(1) && rd === wb_waddr)
+  val fp_data_hazard_wb = id_ctrl.fp && wb_ctrl.wfd && checkHazards(fp_hazard_targets, (_,rd) => rd === wb_waddr)
   val id_wb_hazard = wb_reg_valid && (data_hazard_wb && wb_set_sboard || fp_data_hazard_wb)
 
   val id_stall_fpu = if (usingFPU) {
@@ -899,7 +899,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     fp_sboard.clear(dmem_resp_replay && dmem_resp_fpu, dmem_resp_waddr)
     fp_sboard.clear(io.fpu.sboard_clr, io.fpu.sboard_clra)
 
-    checkHazards(fp_hazard_targets, fp_sboard.read _)
+    checkHazards(fp_hazard_targets, (_,rd) => fp_sboard.read(rd))
   } else false.B
 
   val dcache_blocked = {
@@ -1127,8 +1127,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     }
   }
 
-  def checkHazards(targets: Seq[(Bool, UInt)], cond: UInt => Bool) =
-    targets.map(h => h._1 && cond(h._2)).reduce(_||_)
+  def checkHazards(targets: Seq[(Bool, Bool, UInt)], cond: (UInt, UInt) => Bool) =
+    targets.map(h => h._1 && cond(h._2, h._3)).reduce(_||_)
 
   def encodeVirtualAddress(a0: UInt, ea: UInt) = if (vaddrBitsExtended == vaddrBits) ea else {
     // efficient means to compress 64-bit VA into vaddrBits+1 bits
