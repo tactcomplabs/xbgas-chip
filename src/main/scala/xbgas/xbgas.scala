@@ -146,9 +146,9 @@ class CommandParserModule(implicit val p: Parameters)
     ImmGen(IMM_S, inst)
   )
   val addr = Wire(UInt((2 * xLen).W))
-  addr := Cat(cmd.rs2, cmd.rs1)
+  addr := Cat(cmd.rs3, cmd.rs1)
   io.addr := addr + imm.asUInt
-  io.local := (cmd.rs2 === 0.U)
+  io.local := (cmd.rs3 === 0.U)
 
   // data
   io.wdata := cmd.rs2

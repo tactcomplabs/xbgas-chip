@@ -56,10 +56,9 @@ trait ScalarOpConstants {
   def EDP_ADDIE = "b010".U
   def EDP_ADDI = "b001".U
   def EDP_NORM = "b000".U
-  // def EDP_ADDIX = "b111".U 
-  // def EDP_ADDIE = "b?10".U
-  // def EDP_ADDI = "b001".U
-  // def EDP_NORM = "b000".U
+  //edp(0)=rs1 is ext
+  //edp(1)=rs2 is ext, rd is ext
+  //edp(2)=rs2=rd, rs3=rs2
 }
 
 trait MemoryOpConstants {

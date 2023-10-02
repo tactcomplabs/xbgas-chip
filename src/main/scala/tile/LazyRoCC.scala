@@ -30,6 +30,7 @@ class RoCCCommand(implicit p: Parameters) extends CoreBundle()(p) {
   val inst = new RoCCInstruction
   val rs1 = Bits(xLen.W)
   val rs2 = Bits(xLen.W)
+  val rs3 = Bits(xLen.W)
   val status = new MStatus
 }
 

@@ -258,6 +258,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val mem_scie_pipelined = Reg(Bool())
   val mem_reg_wdata = Reg(Bits())
   val mem_reg_rs2 = Reg(Bits())
+  val mem_reg_rs3 = Reg(Bits())
   val mem_br_taken = Reg(Bool())
   val take_pc_mem = Wire(Bool())
   val mem_reg_wphit          = Reg(Vec(nBreakpoints, Bool()))
@@ -277,6 +278,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val wb_reg_raw_inst = Reg(UInt())
   val wb_reg_wdata = Reg(Bits())
   val wb_reg_rs2 = Reg(Bits())
+  val wb_reg_rs3 = Reg(Bits())
   val take_pc_wb = Wire(Bool())
   val wb_reg_wphit           = Reg(Vec(nBreakpoints, Bool()))
 
@@ -308,6 +310,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val id_reg_fence = RegInit(false.B)
   val id_ren = IndexedSeq(id_ctrl.rxs1, id_ctrl.rxs2, id_ctrl.rocc)
   val id_raddr = IndexedSeq(id_raddr1, Mux(id_ctrl.edp(2), id_waddr, id_raddr2), Mux(id_ctrl.edp(2), id_raddr2, id_raddr1))
+  dontTouch(id_raddr(0))
+  dontTouch(id_raddr(1))
+  dontTouch(id_raddr(2))
   val rf = new RegFile(regAddrMask, xLen)
   val erf = new RegFile(regAddrMask, xLen)
   val id_rs = for(i <- 0 until id_raddr.size)
@@ -410,7 +415,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val id_bypass_src = IndexedSeq(
     bypass_sources.map(s => s._1 && s._2 === id_raddr(0) && s._3 === id_ctrl.edp(0)),
     bypass_sources.map(s => s._1 && s._2 === id_raddr(1) && s._3 === id_ctrl.edp(1)),
-    bypass_sources.map(s => s._1 && s._2 === id_raddr(2) && s._3 === id_ctrl.edp(1))
+    bypass_sources.map(s => s._1 && s._2 === id_raddr(2) && s._3 === true.B)
   )
 
   // execute stage
@@ -420,6 +425,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val ex_reg_rs_msb = Reg(Vec(id_raddr.size, UInt()))
   val ex_rs = for (i <- 0 until id_raddr.size)
     yield Mux(ex_reg_rs_bypass(i), bypass_mux(ex_reg_rs_lsb(i)), Cat(ex_reg_rs_msb(i), ex_reg_rs_lsb(i)))
+  dontTouch(ex_rs(2))
   val ex_imm = ImmGen(ex_ctrl.sel_imm, ex_reg_inst)
   val ex_op1 = MuxLookup(ex_ctrl.sel_alu1, 0.S, Seq(
     A1_RS1 -> ex_rs(0).asSInt,
@@ -428,10 +434,6 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     A2_RS2 -> ex_rs(1).asSInt,
     A2_IMM -> ex_imm,
     A2_SIZE -> Mux(ex_reg_rvc, 2.S, 4.S)))
-
-  //extended addressing TODO
-  // val ex_ext_addr = Cat(ex_rs(1).asUInt(xLen), ex_rs(0).asUInt(xLen)).asSInt + ex_imm.asSInt
-  // val ex_ext_addr_valid = ex_ctrl.ers =/= ERS_NONE && ex_ctrl.mem
 
   val alu = Module(aluFn match {
     case _: ABLUFN => new ABLU
@@ -648,6 +650,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     ))
     mem_br_taken := alu.io.cmp_out
 
+    when (ex_ctrl.rocc) {
+      mem_reg_rs3 := ex_rs(2)
+    }
     when (ex_ctrl.rxs2 && (ex_ctrl.mem || ex_ctrl.rocc || ex_sfence)) {
       val size = Mux(ex_ctrl.rocc, log2Ceil(xLen/8).U, ex_reg_mem_size)
       mem_reg_rs2 := new StoreGen(size, 0.U, ex_rs(1), coreDataBytes).data
@@ -696,6 +701,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
       Mux(!mem_reg_xcpt && mem_ctrl.fp && mem_ctrl.wxd, io.fpu.toint_data, mem_int_wdata))
     when (mem_ctrl.rocc || mem_reg_sfence) {
       wb_reg_rs2 := mem_reg_rs2
+      wb_reg_rs3 := mem_reg_rs3
     }
     wb_reg_cause := mem_cause
     wb_reg_inst := mem_reg_inst
@@ -856,7 +862,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val hazard_targets = Seq((id_ren(0) && (id_ctrl.edp(0) || id_raddr(0) =/= 0.U), id_ctrl.edp(0), id_raddr(0)),
                            (id_ren(1) && (id_ctrl.edp(1) || id_raddr(1) =/= 0.U), id_ctrl.edp(1), id_raddr(1)),
                            (id_ren(2), true.B, id_raddr(2)),
-                           (id_ctrl.wxd  && (id_ctrl.edp(2) || id_waddr =/= 0.U), id_ctrl.edp(2), id_waddr))
+                           (id_ctrl.wxd  && (id_ctrl.edp(1) || id_waddr =/= 0.U), id_ctrl.edp(1), id_waddr))
   val fp_hazard_targets = Seq((io.fpu.dec.ren1, false.B, id_raddr(0)),
                               (io.fpu.dec.ren2, false.B, id_raddr(1)),
                               (io.fpu.dec.ren3, false.B, id_raddr(2)),
@@ -1003,6 +1009,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   io.rocc.cmd.bits.inst := wb_reg_inst.asTypeOf(new RoCCInstruction())
   io.rocc.cmd.bits.rs1 := wb_reg_wdata
   io.rocc.cmd.bits.rs2 := wb_reg_rs2
+  io.rocc.cmd.bits.rs3 := wb_reg_rs3
 
   // gate the clock
   val unpause = csr.io.time(rocketParams.lgPauseCycles-1, 0) === 0.U || csr.io.inhibit_cycle || io.dmem.perf.release || take_pc
