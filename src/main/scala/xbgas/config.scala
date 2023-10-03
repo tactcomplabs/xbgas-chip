@@ -7,12 +7,14 @@ import chisel3._
 
 object XbgasOpcodeSet {
   def integerLoad = new OpcodeSet(Seq("b1110111".U))
+  def integerStore = new OpcodeSet(Seq("b1111011".U))
+  def all = integerLoad | integerStore
 }
 
 class WithXbgasRocc extends Config ((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
-      val xbgas = LazyModule.apply(new XbgasAccel(XbgasOpcodeSet.integerLoad)(p))
+      val xbgas = LazyModule.apply(new XbgasAccel(XbgasOpcodeSet.all)(p))
       xbgas
     }
   )
