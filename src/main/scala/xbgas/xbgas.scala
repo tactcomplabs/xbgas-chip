@@ -5,6 +5,7 @@ import chisel3.util._
 import freechips.rocketchip.tile._
 import org.chipsalliance.cde.config._
 import freechips.rocketchip.tilelink._
+import freechips.rocketchip.rocket._
 
 class XbgasAccel(opcodes: OpcodeSet)(implicit p: Parameters)
     extends LazyRoCC(opcodes, nPTWPorts = 0) {
@@ -59,7 +60,7 @@ class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
   tl_out.d.ready := (state === s_tl_wait)
   val data = Reg(UInt(xLen.W))
   when(tl_out.d.fire) {
-    data := tl_out.d.bits.data
+    data := new LoadGen(commandParser.io.size, commandParser.io.signed, commandParser.io.addr(xLen,0), tl_out.d.bits.data, false.B, coreDataBytes).data
     state := Mux(tl_out.d.bits.opcode === TLMessages.AccessAckData, s_resp, s_idle)
   }
 
@@ -85,6 +86,7 @@ class CommandParserModule(implicit val p: Parameters)
   val io = IO(new Bundle {
     val size = Output(UInt())
     val load = Output(Bool())
+    val signed = Output(Bool())
     val rd = Output(UInt(5.W))
     val wdata = Output(UInt(xLen.W))
     val cmd = Input(new RoCCCommand)
@@ -106,6 +108,7 @@ class CommandParserModule(implicit val p: Parameters)
   // data
   io.wdata := cmd.rs2
   io.rd := cmd.inst.rd
+  io.signed := true.B
 }
 
 class RegFile(n: Int, w: Int) {

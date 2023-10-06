@@ -726,6 +726,7 @@ class ZXBGASDecode(aluFn: ALUFN = ALUFN())(implicit val p: Parameters) extends D
     EADDIE ->     List(Y,N,N,N,N,N,N,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   N,M_X,      N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_ADDIE),
     EADDIX ->     List(Y,N,N,N,N,N,N,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   N,M_X,      N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_ADDIX),//ers1 needed only
     ELD->         List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_MEM),
+    ELW->         List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_I, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_MEM),
     ESD->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_S, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_MEM),
     //TODO enable rxs2 for stores, not loads, not addi
     )
