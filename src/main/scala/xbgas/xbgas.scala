@@ -47,11 +47,24 @@ class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
     .Put(
       fromSource = 0.U,
       toAddress = commandParser.io.addr,
-      data = commandParser.io.wdata,
-      lgSize = commandParser.io.size
+      lgSize = commandParser.io.size,
+      data = commandParser.io.wdata
     )
     ._2
-  tl_out.a.bits := Mux(commandParser.io.load, get, put)
+  val putPartial = edgesOut
+    .Put(
+      fromSource = 0.U,
+      toAddress = commandParser.io.addr,
+      lgSize = commandParser.io.size,
+      data = commandParser.io.wdata,
+      mask = commandParser.io.mask
+    )
+    ._2
+  tl_out.a.bits := Mux(
+    commandParser.io.load,
+    get,
+    Mux(commandParser.io.partial, putPartial, put)
+  )
   when(tl_out.a.fire) {
     state := s_tl_wait
   }
@@ -59,15 +72,36 @@ class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
   // receive data from MMIO
   tl_out.d.ready := (state === s_tl_wait)
   val data = Reg(UInt(xLen.W))
+  val addr = commandParser.io.addr(coreMaxAddrBits - 1, 0)
+  val loadGenData = new LoadGen(
+    commandParser.io.size,
+    commandParser.io.signed,
+    addr,
+    tl_out.d.bits.data,
+    false.B,
+    coreDataBytes
+  ).data
+  val coreDataBytesWire = Wire(UInt())
+  coreDataBytesWire := coreDataBytes.U
+  dontTouch(coreDataBytesWire)
+  data := loadGenData
+  val loadGenDataWire = Wire(UInt())
+  loadGenDataWire := loadGenData
+  dontTouch(loadGenDataWire)
+  dontTouch(addr)
   when(tl_out.d.fire) {
-    data := new LoadGen(commandParser.io.size, commandParser.io.signed, commandParser.io.addr(xLen,0), tl_out.d.bits.data, false.B, coreDataBytes).data
-    state := Mux(tl_out.d.bits.opcode === TLMessages.AccessAckData, s_resp, s_idle)
+    state := Mux(
+      tl_out.d.bits.opcode === TLMessages.AccessAckData,
+      s_resp,
+      s_idle
+    )
   }
 
   // respond
   io.resp.valid := (state === s_resp)
   io.resp.bits.data := data
   io.resp.bits.rd := commandParser.io.rd
+  io.resp.bits.extd := commandParser.io.extd
   when(io.resp.fire) {
     state := s_idle
   }
@@ -84,11 +118,14 @@ class CommandParserModule(implicit val p: Parameters)
     extends Module
     with HasCoreParameters {
   val io = IO(new Bundle {
-    val size = Output(UInt())
+    val size = Output(UInt(2.W))
     val load = Output(Bool())
     val signed = Output(Bool())
     val rd = Output(UInt(5.W))
     val wdata = Output(UInt(xLen.W))
+    val mask = Output(UInt(coreDataBytes.W))
+    val partial = Output(Bool())
+    val extd = Output(Bool())
     val cmd = Input(new RoCCCommand)
     val addr = Output(UInt((2 * xLen).W))
     val state = Input(UInt(3.W))
@@ -99,16 +136,40 @@ class CommandParserModule(implicit val p: Parameters)
   val reg_cmd = RegEnable(io.cmd, stateIsIdle)
   val cmd = Mux(stateIsIdle, io.cmd, reg_cmd)
 
-  io.size := VecInit(cmd.inst.xs2, cmd.inst.xs1).asUInt
-  io.load := (cmd.inst.opcode =/= "b1111011".U)
+  val funct3 = cmd.inst.asUInt(14, 12)
+  val size = getSize(cmd.inst.opcode, funct3)
+  io.size := size
+  io.load := XbgasOpcodeSet.integerLoad.matches(cmd.inst.opcode)
+  io.extd := isExtendedDestination(cmd.inst.opcode, funct3)
 
   // extended addressing
   io.addr := Cat(cmd.rs3, cmd.rs1)
 
   // data
-  io.wdata := cmd.rs2
+  val storeGen = new StoreGen(
+    size,
+    cmd.rs1(coreMaxAddrBits - 1, 0),
+    cmd.rs2,
+    coreDataBytes
+  )
+  val misaligned = storeGen.misaligned
+  dontTouch(misaligned)
+  io.wdata := storeGen.data
+  io.mask := storeGen.mask
+  io.partial := size =/= 3.U
+  io.signed := !cmd.inst.asUInt(14)
   io.rd := cmd.inst.rd
-  io.signed := true.B
+
+  def getSize(opcode: UInt, funct3: UInt) = {
+    Mux1H(Seq(
+      XbgasOpcodeSet.integerLoad.matches(opcode) -> funct3(1,0),
+      XbgasOpcodeSet.integerStore.matches(opcode) -> ((funct3(2).asUInt << 1) | funct3(1,0))
+    ))
+  }
+
+  def isExtendedDestination(opcode: UInt, funct3: UInt) = {
+    XbgasOpcodeSet.integerLoad.matches(opcode) && funct3 === 7.U
+  }
 }
 
 class RegFile(n: Int, w: Int) {

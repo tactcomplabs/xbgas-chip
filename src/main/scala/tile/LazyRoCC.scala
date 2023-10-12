@@ -37,6 +37,7 @@ class RoCCCommand(implicit p: Parameters) extends CoreBundle()(p) {
 class RoCCResponse(implicit p: Parameters) extends CoreBundle()(p) {
   val rd = Bits(5.W)
   val data = Bits(xLen.W)
+  val extd = Bool()
 }
 
 class RoCCCoreIO(val nRoCCCSRs: Int = 0)(implicit p: Parameters) extends CoreBundle()(p) {

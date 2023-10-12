@@ -12,6 +12,7 @@ import freechips.rocketchip.util._
 import freechips.rocketchip.util.property
 import freechips.rocketchip.scie._
 import scala.collection.mutable.ArrayBuffer
+import xbgas.XbgasOpcodeSet
 
 case class RocketCoreParams(
   bootFreqHz: BigInt = 0,
@@ -537,7 +538,10 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     ex_reg_flush_pipe := id_ctrl.fence_i || id_csr_flush
     ex_reg_load_use := id_load_use
     ex_reg_hls := usingHypervisor.B && id_system_insn && id_ctrl.mem_cmd.isOneOf(M_XRD, M_XWR, M_HLVX)
-    ex_reg_mem_size := Mux(usingHypervisor.B && id_system_insn, id_inst(0)(27, 26), id_inst(0)(13, 12))
+    ex_reg_mem_size := Mux(usingHypervisor.B && id_system_insn, id_inst(0)(27, 26), getSize())
+    def getSize() = {
+      id_inst(0)(13,12) | ((XbgasOpcodeSet.integerStore.matches(id_inst(0)(6,0)) && id_inst(0)(14)) << 1)
+    }
     when (id_ctrl.mem_cmd.isOneOf(M_SFENCE, M_HFENCEV, M_HFENCEG, M_FLUSH_ALL)) {
       ex_reg_mem_size := Cat(id_raddr2 =/= 0.U, id_raddr1 =/= 0.U)
     }
@@ -655,8 +659,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
       mem_reg_rs3 := ex_rs(2)
     }
     when (ex_ctrl.rxs2 && (ex_ctrl.mem || ex_ctrl.rocc || ex_sfence)) {
-      val size = Mux(ex_ctrl.rocc, log2Ceil(xLen/8).U, ex_reg_mem_size)
-      mem_reg_rs2 := new StoreGen(size, 0.U, ex_rs(1), coreDataBytes).data
+      mem_reg_rs2 := new StoreGen(ex_reg_mem_size, 0.U, ex_rs(1), coreDataBytes).data
     }
     when (ex_ctrl.jalr && csr.io.status.debug) {
       // flush I$ on D-mode JALR to effect uncached fetch without D$ flush
@@ -763,6 +766,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val ll_wdata = WireDefault(div.io.resp.bits.data)
   val ll_waddr = WireDefault(div.io.resp.bits.tag)
   val ll_wen = WireDefault(div.io.resp.fire)
+  val ll_extd = WireDefault(false.B)
   if (usingRoCC) {
     io.rocc.resp.ready := !wb_wxd
     when (io.rocc.resp.fire) {
@@ -770,6 +774,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
       ll_wdata := io.rocc.resp.bits.data
       ll_waddr := io.rocc.resp.bits.rd
       ll_wen := true.B
+      ll_extd := io.rocc.resp.bits.extd
     }
   }
   when (dmem_resp_replay && dmem_resp_xpu) {
@@ -789,8 +794,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
                  Mux(wb_ctrl.csr =/= CSR.N, csr.io.rw.rdata,
                  Mux(wb_ctrl.mul, mul.map(_.io.resp.bits.data).getOrElse(wb_reg_wdata),
                  wb_reg_wdata))))
+  val rf_extd = Mux(ll_wen, ll_extd, wb_ctrl.edp(1))
   when (rf_wen) { 
-    when (wb_ctrl.edp(1)){
+    when (rf_extd){
       erf.write(rf_waddr, rf_wdata)
     }.otherwise{
       rf.write(rf_waddr, rf_wdata)
