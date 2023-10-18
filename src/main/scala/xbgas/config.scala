@@ -8,7 +8,8 @@ import chisel3._
 object XbgasOpcodeSet {
   def integerLoad = new OpcodeSet(Seq("b1110111".U))
   def integerStore = new OpcodeSet(Seq("b1111011".U))
-  def all = integerLoad | integerStore
+  def rawInteger = new OpcodeSet(Seq("b0110011".U))
+  def all = integerLoad | integerStore | rawInteger
 }
 
 class WithXbgasRocc extends Config ((site, here, up) => {

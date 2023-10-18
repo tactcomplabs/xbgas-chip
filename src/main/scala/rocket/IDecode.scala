@@ -737,6 +737,18 @@ class ZXBGASDecode(aluFn: ALUFN = ALUFN())(implicit val p: Parameters) extends D
     ESH->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_S, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_MEM),
     ESB->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_S, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_MEM),
     ESE->         List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_IMM, A1_RS1, IMM_S, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_MEME),
+    ERLD->        List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_RMEM),
+    ERLW->        List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_RMEM),
+    ERLH->        List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_RMEM),
+    ERLHU->       List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_RMEM),
+    ERLB->        List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_RMEM),
+    ERLBU->       List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_RMEM),
+    ERLE->        List(Y,N,Y,N,N,N,N,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XRD,    N,N,N,N,N,N,Y,CSR.N,N,N,N,N,EDP_RMEME),
+    ERSD->        List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_RMEM),
+    ERSW->        List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_RMEM),
+    ERSH->        List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_RMEM),
+    ERSB->        List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_RMEM),
+    ERSE->        List(Y,N,Y,N,N,N,Y,Y,N,N,N,N,A2_ZERO, A1_RS1, IMM_X, DW_XPR,aluFn.FN_ADD,   Y,M_XWR,    N,N,N,N,N,N,N,CSR.N,N,N,N,N,EDP_RMEME)
     )
 }
 

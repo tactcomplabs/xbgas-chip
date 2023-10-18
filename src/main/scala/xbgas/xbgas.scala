@@ -6,6 +6,7 @@ import freechips.rocketchip.tile._
 import org.chipsalliance.cde.config._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.rocket._
+import freechips.rocketchip.util._
 
 class XbgasAccel(opcodes: OpcodeSet)(implicit p: Parameters)
     extends LazyRoCC(opcodes, nPTWPorts = 0) {
@@ -136,11 +137,12 @@ class CommandParserModule(implicit val p: Parameters)
   val reg_cmd = RegEnable(io.cmd, stateIsIdle)
   val cmd = Mux(stateIsIdle, io.cmd, reg_cmd)
 
-  val funct3 = cmd.inst.asUInt(14, 12)
-  val size = getSize(cmd.inst.opcode, funct3)
+  val (extendedDestination, load, size) = decodeXbgasInstruction(
+    cmd.inst.asUInt
+  )
   io.size := size
-  io.load := XbgasOpcodeSet.integerLoad.matches(cmd.inst.opcode)
-  io.extd := isExtendedDestination(cmd.inst.opcode, funct3)
+  io.load := load
+  io.extd := extendedDestination
 
   // extended addressing
   io.addr := Cat(cmd.rs3, cmd.rs1)
@@ -152,60 +154,28 @@ class CommandParserModule(implicit val p: Parameters)
     cmd.rs2,
     coreDataBytes
   )
-  val misaligned = storeGen.misaligned
-  dontTouch(misaligned)
+
   io.wdata := storeGen.data
   io.mask := storeGen.mask
   io.partial := size =/= 3.U
   io.signed := !cmd.inst.asUInt(14)
   io.rd := cmd.inst.rd
 
-  def getSize(opcode: UInt, funct3: UInt) = {
-    Mux1H(Seq(
-      XbgasOpcodeSet.integerLoad.matches(opcode) -> funct3(1,0),
-      XbgasOpcodeSet.integerStore.matches(opcode) -> ((funct3(2).asUInt << 1) | funct3(1,0))
-    ))
-  }
+  def decodeXbgasInstruction(inst: UInt) = {
+    val opcode = inst(6, 0)
+    val funct3 = inst(14, 12)
+    val funct7 = inst(31, 25)
 
-  def isExtendedDestination(opcode: UInt, funct3: UInt) = {
-    XbgasOpcodeSet.integerLoad.matches(opcode) && funct3 === 7.U
-  }
-}
+    val load = Mux1H(
+      Seq(
+        XbgasOpcodeSet.integerLoad.matches(opcode) -> true.B,
+        XbgasOpcodeSet.integerStore.matches(opcode) -> false.B,
+        XbgasOpcodeSet.rawInteger.matches(opcode) -> (funct7 === "b1010101".U)
+      )
+    )
 
-class RegFile(n: Int, w: Int) {
-  val rf = Mem(n, UInt(w.W))
-  private def access(addr: UInt) = rf(~addr(log2Up(n) - 1, 0))
-  def read(addr: UInt) = {
-    access(addr)
-  }
-  def write(addr: UInt, data: UInt) = {
-    when(addr =/= 0.U) {
-      access(addr) := data
-    }
+    val extd = funct3 === 7.U
+    val size = funct3(1, 0)
+    (extd, load, size)
   }
 }
-
-// // request pte *(wont need to in production, all addr are assumed paddr)
-// io.ptw(0).req.valid := (state === s_ptw_req)
-// io.ptw(0).req.bits.valid := true.B
-// io.ptw(0).req.bits.bits.addr := commandParser.io.vpn
-// when(io.ptw(0).req.fire) {
-//   state := s_ptw_resp
-// }
-
-// // receive pte
-// val pte = Reg(new PTE)
-// val paddr = Wire(UInt(paddrBits.W))
-// paddr := Mux(
-//   pte.leaf(),
-//   Cat(pte.ppn, commandParser.io.vpo),
-//   Cat(commandParser.io.vpn, commandParser.io.vpo)
-// )
-// when(state === s_ptw_resp && io.ptw(0).resp.valid) {
-//   pte := io.ptw(0).resp.bits.pte
-//   state := s_tl_req
-// }
-
-// io.vaddr := _addr(vaddrBits - 1, 0)
-// io.vpn := _addr(vaddrBits - 1, pgIdxBits)
-// io.vpo := _addr(pgIdxBits - 1, 0)
