@@ -7,101 +7,100 @@ import org.chipsalliance.cde.config._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.util._
+import freechips.rocketchip.diplomacy.IdRange
 
 class XbgasAccel(opcodes: OpcodeSet)(implicit p: Parameters)
     extends LazyRoCC(opcodes, nPTWPorts = 0) {
-  override lazy val module = new XbgasAccelModuleImp3(this)
+  override lazy val module = new XbgasAccelModuleImp(this)
   override val atlNode = TLClientNode(
-    Seq(TLMasterPortParameters.v1(Seq(TLMasterParameters.v1("XbgasRoCC"))))
+    Seq(
+      TLMasterPortParameters.v1(
+        Seq(
+          TLMasterParameters.v1(
+            name = "XbgasRoCC",
+            sourceId = IdRange(0, 32)
+          )
+        )
+      )
+    )
   )
 }
 
-class XbgasAccelModuleImp3(outer: XbgasAccel)(implicit p: Parameters)
+class XbgasAccelModuleImp(outer: XbgasAccel)(implicit p: Parameters)
     extends LazyRoCCModuleImp(outer)
-    with HasCoreParameters {
-  val s_idle :: s_tl_req :: s_tl_wait :: s_resp :: Nil =
-    Enum(4)
-  val state = RegInit(s_idle)
-  val cmd =
-    Wire(new CommandDecoder()).update(RegEnable(io.cmd.bits, state === s_idle))
-  io.busy := (state =/= s_idle)
-  io.interrupt := false.B
-
-  // receive cmd
-  io.cmd.ready := (state === s_idle)
-  when(io.cmd.fire) {
-    state := s_tl_req
-  }
-
-  // request data from MMIO
+    with HasCoreParameters
+    with HasXbgasParams {
   val (tl_out, edgesOut) = outer.atlNode.out(0)
-  tl_out.a.valid := (state === s_tl_req)
+  val buf0 = Queue(CommandDecoder(io.cmd, p), queueWidth, flow = true)
+  buf0.nodeq()
+  val buf1 = RegInit(VecInit(Seq.fill(queueWidth)(CommandDecoder(p))))
+  val buf1valid = RegInit(VecInit(Seq.fill(queueWidth)(false.B)))
+  val buf12 = DecoupledCommandDecoder(p) // floating valid
+
+  tl_out.a.valid := buf0.valid && ~buf1valid.reduce(_&&_)
   val get = edgesOut
     .Get(
-      fromSource = 0.U,
-      toAddress = cmd.baseAddr,
-      lgSize = cmd.size
+      fromSource = buf0.bits.rd,
+      toAddress = buf0.bits.baseAddr,
+      lgSize = buf0.bits.size
     )
     ._2
   val put = edgesOut
     .Put(
-      fromSource = 0.U,
-      toAddress = cmd.baseAddr,
-      lgSize = cmd.size,
-      data = cmd.storeData
+      fromSource = buf0.bits.rd,
+      toAddress = buf0.bits.baseAddr,
+      lgSize = buf0.bits.size,
+      data = buf0.bits.storeData
     )
     ._2
   val putPartial = edgesOut
     .Put(
-      fromSource = 0.U,
-      toAddress = cmd.baseAddr,
-      lgSize = cmd.size,
-      data = cmd.storeData,
-      mask = cmd.mask
+      fromSource = buf0.bits.rd,
+      toAddress = buf0.bits.baseAddr,
+      lgSize = buf0.bits.size,
+      data = buf0.bits.storeData,
+      mask = buf0.bits.mask
     )
     ._2
-  tl_out.a.bits := Mux(
-    cmd.load,
-    get,
-    Mux(cmd.partial, putPartial, put)
+  tl_out.a.bits := PriorityMux(
+    Seq(
+      buf0.bits.load -> get,
+      buf0.bits.partial -> putPartial,
+      true.B -> put
+    )
   )
   when(tl_out.a.fire) {
-    state := s_tl_wait
+    val sel = PriorityEncoder(buf1valid.map(~_).asUInt)
+    buf1(sel) := (buf0.deq())
+    buf1valid(sel) := true.B
   }
 
-  // receive data from MMIO
-  tl_out.d.ready := (state === s_tl_wait)
-  val data = Reg(UInt(xLen.W))
+  tl_out.d.ready := buf1valid.reduce(_||_) && buf12.ready
   when(tl_out.d.fire) {
-    state := Mux(
-      tl_out.d.bits.opcode === TLMessages.AccessAckData,
-      s_resp,
-      s_idle
+    val sel = PriorityMux(
+      for (i <- 0 until queueWidth)
+        yield (buf1valid(i) && buf1(i).rd === tl_out.d.bits.source) -> i.U
     )
-    data := new LoadGen(
-      cmd.size,
-      ~cmd.unsigned,
-      cmd.baseAddr,
+    buf12.enq(buf1(sel))
+    buf1valid(sel) := false.B
+    buf12.bits.data := new LoadGen(
+      buf12.bits.size,
+      ~buf12.bits.unsigned,
+      buf12.bits.baseAddr,
       tl_out.d.bits.data,
       false.B,
       coreDataBytes
     ).data
   }
 
-  // respond
-  io.resp.valid := (state === s_resp)
-  io.resp.bits.data := data
-  io.resp.bits.rd := cmd.rd
-  io.resp.bits.extd := cmd.extd
-  when(io.resp.fire) {
-    state := s_idle
-  }
-
-  val tl_out_a = tl_out.a
-  val tl_out_d = tl_out.d
+  io.resp <> Queue(buf12, queueWidth, flow = true)
+  io.busy := buf0.valid || buf1valid.reduce(_||_) || io.resp.valid
+  io.interrupt := false.B
 }
 
-class CommandDecoder(implicit val p: Parameters) extends Bundle {
+class CommandDecoder(implicit val p: Parameters)
+    extends Bundle
+    with HasCoreParameters {
   val size = Bits(2.W)
   val extd = Bool()
   val remoteAddr = Bits(64.W)
@@ -112,8 +111,9 @@ class CommandDecoder(implicit val p: Parameters) extends Bundle {
   val partial = Bool()
   val rd = Bits(5.W)
   val load = Bool()
+  val data = Bits(coreDataBits.W)
 
-  def update(cmd: RoCCCommand) = {
+  def decode(cmd: RoCCCommand) = {
     val cmd_uint = cmd.inst.asUInt
     val storeGen = new StoreGen(size, baseAddr, cmd.rs2, 8)
     size := cmd_uint(13, 12)
@@ -125,6 +125,7 @@ class CommandDecoder(implicit val p: Parameters) extends Bundle {
     unsigned := cmd_uint(14)
     partial := size =/= 3.U
     rd := cmd.inst.rd
+    data := DontCare
     load := Mux1H(
       Seq(
         XbgasOpcodeSet.integerLoad.matches(cmd_uint(6, 0)) -> true.B,
@@ -134,5 +135,47 @@ class CommandDecoder(implicit val p: Parameters) extends Bundle {
       )
     )
     this
+  }
+
+  def dontCare() = {
+    size := DontCare
+    extd := DontCare
+    remoteAddr := DontCare
+    baseAddr := DontCare
+    storeData := DontCare
+    mask := DontCare
+    unsigned := DontCare
+    partial := DontCare
+    rd := DontCare
+    load := DontCare
+    data := DontCare
+    this
+  }
+}
+
+object CommandDecoder {
+  def apply(cmd: ReadyValidIO[RoCCCommand], p: Parameters) = {
+    val decodedCommand = Wire(new CommandDecoder()(p)).decode(cmd.bits)
+    val decoupledCommand = Wire(Decoupled(chiselTypeOf(decodedCommand)))
+    decoupledCommand.valid := cmd.valid
+    decoupledCommand.bits := decodedCommand
+    cmd.ready := decoupledCommand.ready
+    decoupledCommand
+  }
+
+  def apply(p: Parameters) = {
+    val emptyCommand = Wire(new CommandDecoder()(p)).dontCare()
+    emptyCommand
+  }
+}
+
+object DecoupledCommandDecoder {
+  def apply(p: Parameters) = {
+    val emptyCommand = CommandDecoder(p)
+    val intermediate = Wire(Decoupled(chiselTypeOf(emptyCommand)))
+    intermediate.bits := emptyCommand
+    intermediate.valid := false.B
+    intermediate.ready := false.B
+    intermediate
   }
 }

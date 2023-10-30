@@ -20,3 +20,7 @@ class WithXbgasRocc extends Config ((site, here, up) => {
     }
   )
 })
+
+trait HasXbgasParams{
+  def queueWidth: Int = 4
+}
