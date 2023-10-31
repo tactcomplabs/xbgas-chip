@@ -10,7 +10,8 @@ import freechips.rocketchip.util._
 import freechips.rocketchip.diplomacy.IdRange
 
 class XbgasAccel(opcodes: OpcodeSet)(implicit p: Parameters)
-    extends LazyRoCC(opcodes, nPTWPorts = 0) {
+    extends LazyRoCC(opcodes, nPTWPorts = 0)
+    with HasXbgasParams {
   override lazy val module = new XbgasAccelModuleImp(this)
   override val atlNode = TLClientNode(
     Seq(
@@ -18,7 +19,7 @@ class XbgasAccel(opcodes: OpcodeSet)(implicit p: Parameters)
         Seq(
           TLMasterParameters.v1(
             name = "XbgasRoCC",
-            sourceId = IdRange(0, 32)
+            sourceId = IdRange(0, queueWidth-1)
           )
         )
       )
@@ -34,20 +35,21 @@ class XbgasAccelModuleImp(outer: XbgasAccel)(implicit p: Parameters)
   val buf0 = Queue(CommandDecoder(io.cmd, p), queueWidth, flow = true)
   buf0.nodeq()
   val buf1 = RegInit(VecInit(Seq.fill(queueWidth)(CommandDecoder(p))))
-  val buf1valid = RegInit(VecInit(Seq.fill(queueWidth)(false.B)))
-  val buf12 = DecoupledCommandDecoder(p) // floating valid
+  val buf1valid = RegInit(VecInit(Seq.fill(queueWidth)(false.B)))//source id cant match anything in queue
+  val buf12 = DecoupledCommandDecoder(p)
 
-  tl_out.a.valid := buf0.valid && ~buf1valid.reduce(_&&_)
+  tl_out.a.valid := buf0.valid && ~buf1valid.reduce(_ && _)
+  val sel1 = PriorityEncoder(buf1valid.map(~_).asUInt)
   val get = edgesOut
     .Get(
-      fromSource = buf0.bits.rd,
+      fromSource = sel1,
       toAddress = buf0.bits.baseAddr,
       lgSize = buf0.bits.size
     )
     ._2
   val put = edgesOut
     .Put(
-      fromSource = buf0.bits.rd,
+      fromSource = sel1,
       toAddress = buf0.bits.baseAddr,
       lgSize = buf0.bits.size,
       data = buf0.bits.storeData
@@ -55,7 +57,7 @@ class XbgasAccelModuleImp(outer: XbgasAccel)(implicit p: Parameters)
     ._2
   val putPartial = edgesOut
     .Put(
-      fromSource = buf0.bits.rd,
+      fromSource = sel1,
       toAddress = buf0.bits.baseAddr,
       lgSize = buf0.bits.size,
       data = buf0.bits.storeData,
@@ -70,19 +72,20 @@ class XbgasAccelModuleImp(outer: XbgasAccel)(implicit p: Parameters)
     )
   )
   when(tl_out.a.fire) {
-    val sel = PriorityEncoder(buf1valid.map(~_).asUInt)
-    buf1(sel) := (buf0.deq())
-    buf1valid(sel) := true.B
+    buf1(sel1) := buf0.deq()
+    buf1valid(sel1) := true.B
   }
 
-  tl_out.d.ready := buf1valid.reduce(_||_) && buf12.ready
+  tl_out.d.ready := buf1valid.reduce(_ || _) && buf12.ready
   when(tl_out.d.fire) {
-    val sel = PriorityMux(
+    val sel2 = PriorityMux(
       for (i <- 0 until queueWidth)
-        yield (buf1valid(i) && buf1(i).rd === tl_out.d.bits.source) -> i.U
+        yield (buf1valid(i) && i.U === tl_out.d.bits.source) -> i.U
     )
-    buf12.enq(buf1(sel))
-    buf1valid(sel) := false.B
+    when(buf1(sel2).load) {
+      buf12.enq(buf1(sel2))
+    }
+    buf1valid(sel2) := false.B
     buf12.bits.data := new LoadGen(
       buf12.bits.size,
       ~buf12.bits.unsigned,
@@ -94,13 +97,20 @@ class XbgasAccelModuleImp(outer: XbgasAccel)(implicit p: Parameters)
   }
 
   io.resp <> Queue(buf12, queueWidth, flow = true)
-  io.busy := buf0.valid || buf1valid.reduce(_||_) || io.resp.valid
+  io.busy := buf0.valid || buf1valid.reduce(_ || _) || io.resp.valid
   io.interrupt := false.B
+
+  dontTouch(tl_out.a)
+  dontTouch(tl_out.d)
+  dontTouch(buf1)
+  dontTouch(buf1valid)
+  dontTouch(buf0)
 }
 
 class CommandDecoder(implicit val p: Parameters)
     extends Bundle
-    with HasCoreParameters {
+    with HasCoreParameters
+    with HasXbgasParams {
   val size = Bits(2.W)
   val extd = Bool()
   val remoteAddr = Bits(64.W)
@@ -112,6 +122,7 @@ class CommandDecoder(implicit val p: Parameters)
   val rd = Bits(5.W)
   val load = Bool()
   val data = Bits(coreDataBits.W)
+  val sourceId = Bits(log2Up(queueWidth).W)
 
   def decode(cmd: RoCCCommand) = {
     val cmd_uint = cmd.inst.asUInt
@@ -126,6 +137,7 @@ class CommandDecoder(implicit val p: Parameters)
     partial := size =/= 3.U
     rd := cmd.inst.rd
     data := DontCare
+    sourceId := DontCare
     load := Mux1H(
       Seq(
         XbgasOpcodeSet.integerLoad.matches(cmd_uint(6, 0)) -> true.B,
@@ -149,13 +161,18 @@ class CommandDecoder(implicit val p: Parameters)
     rd := DontCare
     load := DontCare
     data := DontCare
+    sourceId := DontCare
     this
   }
 }
 
-object CommandDecoder {
+object CommandDecoder extends HasXbgasParams {
+  private val sourceIdInc = RegInit(0.U(log2Up(queueWidth).W))
   def apply(cmd: ReadyValidIO[RoCCCommand], p: Parameters) = {
     val decodedCommand = Wire(new CommandDecoder()(p)).decode(cmd.bits)
+    decodedCommand.sourceId := sourceIdInc
+    sourceIdInc := sourceIdInc + 1.U
+
     val decoupledCommand = Wire(Decoupled(chiselTypeOf(decodedCommand)))
     decoupledCommand.valid := cmd.valid
     decoupledCommand.bits := decodedCommand
