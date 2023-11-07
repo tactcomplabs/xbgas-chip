@@ -78,6 +78,7 @@ object emulator extends mill.Cross[Emulator](
   ("freechips.rocketchip.system.TestHarness", "freechips.rocketchip.system.MemPortOnlyConfig"),
   ("freechips.rocketchip.system.TestHarness", "freechips.rocketchip.system.MMIOPortOnlyConfig"),
   ("freechips.rocketchip.system.TestHarness", "freechips.rocketchip.system.CloneTileConfig"),
+  ("freechips.rocketchip.system.TestHarness", "freechips.rocketchip.system.XbgasConfig")
 )
 class Emulator(top: String, config: String) extends ScalaModule {
   override def moduleDeps = Seq(rocketchip)
