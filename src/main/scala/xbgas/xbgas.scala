@@ -19,7 +19,7 @@ class XbgasAccel(opcodes: OpcodeSet)(implicit p: Parameters)
         Seq(
           TLMasterParameters.v1(
             name = "XbgasRoCC",
-            sourceId = IdRange(0, queueWidth-1)
+            sourceId = IdRange(0, queueWidth) //IdRange is half open
           )
         )
       )
